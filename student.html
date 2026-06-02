@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>学生端 - 平面图形复习</title>
+    <style>
+        body { font-family: 'Comic Sans MS', 'Microsoft YaHei', sans-serif; background: #e0f7fa; margin: 0; padding: 20px; box-sizing: border-box; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .card { background: white; border-radius: 20px; padding: 25px; margin-bottom: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); }
+        h1 { color: #00acc1; text-align: center; }
+        h3 { color: #00838f; border-left: 5px solid #26c6da; padding-left: 10px; }
+        select { width: 100%; padding: 10px; margin: 10px 0; border-radius: 10px; border: 2px solid #b2ebf2; font-size: 16px; box-sizing: border-box; }
+        .upload-area { width: 100%; height: 300px; border: 3px dashed #26c6da; border-radius: 15px; display: flex; justify-content: center; align-items: center; cursor: pointer; background: #f0fcfd; margin: 15px 0; overflow: hidden; position: relative; transition: background 0.3s; }
+        .upload-area:hover { background: #e0f7fa; }
+        .upload-area span { color: #00acc1; font-size: 20px; font-weight: bold; pointer-events: none; }
+        .upload-area img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .btn-group { display: flex; gap: 10px; justify-content: center; margin-top: 15px;}
+        button { padding: 12px 25px; border: none; border-radius: 15px; font-size: 16px; cursor: pointer; font-weight: bold; color: white; transition: transform 0.2s;}
+        button:hover { transform: scale(1.05); }
+        .btn-upload { background: #26c6da; }
+        .btn-delete { background: #ef5350; }
+        button:disabled { background: #ccc; cursor: not-allowed; transform: none;}
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
+        .gallery-item { background: #f5f5f5; border-radius: 10px; overflow: hidden; text-align: center; cursor: pointer; transition: transform 0.2s; }
+        .gallery-item:hover { transform: translateY(-3px); }
+        .gallery-item img { width: 100%; height: 150px; object-fit: contain; background: #fff; pointer-events: none;}
+        .gallery-item p { margin: 5px 0; font-size: 14px; color: #555; font-weight: bold; pointer-events: none;}
+        #lightbox { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; }
+        #lightbox img { max-width: 90%; max-height: 85%; border-radius: 10px; }
+        #lightbox .close-btn { position: absolute; top: 20px; right: 30px; color: white; font-size: 40px; cursor: pointer; font-weight: bold; }
+        #lightbox .group-tag { color: #ffd54f; font-size: 24px; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>✂️ 平面图形复习 ✂️</h1>
+            <h3>📌 活动要求：</h3>
+            <p style="font-size: 17px; line-height: 1.5;">
+                1.小组合作，讨论图形转化的方法。<br><br>
+                2.在方格图中画出转化的过程，记录思考过程。<br><br>
+                3.拍照上传。
+            </p>
+        </div>
+        <div class="card">
+            <h3>📤 上传我的作品</h3>
+            <label>选择我的小组：</label>
+            <select id="groupSelect" onchange="renderMyWork()">
+                <option value="第1小组">第1小组</option><option value="第2小组">第2小组</option><option value="第3小组">第3小组</option><option value="第4小组">第4小组</option><option value="第5小组">第5小组</option>
+            </select>
+            <div class="upload-area" id="uploadArea" onclick="document.getElementById('imageInput').click()">
+                <span id="uploadText">📷 点击这里拍照 / 选择图片</span>
+                <img id="previewImg" style="display:none;">
+            </div>
+            <input type="file" id="imageInput" accept="image/*" capture="environment" style="display:none" onchange="previewFile(this)">
+            <div class="btn-group">
+                <button class="btn-upload" id="uploadBtn" onclick="uploadWork()">提交作品</button>
+                <button class="btn-delete" id="deleteBtn" onclick="deleteMyWork()" style="display:none;">删除本组作品</button>
+            </div>
+        </div>
+        <div class="card">
+            <h3>🖼️ 看看其他小组的作品</h3>
+            <div class="gallery" id="gallery"></div>
+        </div>
+    </div>
+    <div id="lightbox" onclick="closeLightbox(event)">
+        <span class="close-btn" onclick="closeLightbox(event)">&times;</span>
+        <img id="lightbox-img" src="">
+        <div class="group-tag" id="lightbox-tag"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const user = JSON.parse(localStorage.getItem('user'));
+        if (!user || user.role !== 'student') window.location.href = 'login.html';
+
+        const socket = io();
+        const gallery = document.getElementById('gallery');
+        let allWorks = [];
+        let myCurrentWorkId = null;
+        let currentBase64 = null; // 暂存压缩后的图片数据
+
+        fetch('/api/works').then(res => res.json()).then(works => { allWorks = works; renderAll(); });
+        socket.on('new_work', (work) => { allWorks.push(work); renderAll(); });
+        socket.on('work_deleted', (id) => { allWorks = allWorks.filter(w => w.id !== id); renderAll(); });
+        socket.on('works_cleared', () => { allWorks = []; renderAll(); });
+
+        function renderAll() { renderMyWork(); renderOtherWorks(); }
+
+        function renderMyWork() {
+            const myGroup = document.getElementById('groupSelect').value;
+            const myWorks = allWorks.filter(w => w.group === myGroup);
+            const latestWork = myWorks.length > 0 ? myWorks[myWorks.length - 1] : null;
+            const previewImg = document.getElementById('previewImg');
+            const uploadText = document.getElementById('uploadText');
+            const deleteBtn = document.getElementById('deleteBtn');
+
+            if (latestWork) {
+                previewImg.src = latestWork.imageUrl;
+                previewImg.style.display = 'block';
+                uploadText.style.display = 'none';
+                deleteBtn.style.display = 'inline-block';
+                myCurrentWorkId = latestWork.id;
+            } else {
+                previewImg.style.display = 'none';
+                uploadText.style.display = 'block';
+                deleteBtn.style.display = 'none';
+                myCurrentWorkId = null;
+            }
+        }
+
+        function renderOtherWorks() {
+            const myGroup = document.getElementById('groupSelect').value;
+            gallery.innerHTML = '';
+            const otherWorks = allWorks.filter(w => w.group !== myGroup).reverse();
+            otherWorks.forEach(work => {
+                const div = document.createElement('div');
+                div.className = 'gallery-item';
+                div.innerHTML = `<img src="${work.imageUrl}" alt="作品"><p>${work.group}</p>`;
+                div.onclick = () => openLightbox(work.imageUrl, work.group);
+                gallery.appendChild(div);
+            });
+        }
+
+        // 核心：压缩图片并预览
+        function previewFile(input) {
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        const MAX_WIDTH = 800; // 限制宽度，防止图片过大
+                        let width = img.width;
+                        let height = img.height;
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // 生成压缩后的 Base64
+                        currentBase64 = canvas.toDataURL('image/jpeg', 0.8); 
+                        document.getElementById('previewImg').src = currentBase64;
+                        document.getElementById('previewImg').style.display = 'block';
+                        document.getElementById('uploadText').style.display = 'none';
+                    }
+                    img.src = e.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function uploadWork() {
+            const group = document.getElementById('groupSelect').value;
+            const btn = document.getElementById('uploadBtn');
+            if (!currentBase64) { alert('请先拍照或选择图片！'); return; }
+
+            btn.disabled = true; btn.textContent = '上传中...';
+
+            fetch('/api/upload', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user.username, group, imageBase64: currentBase64 }) 
+            }).then(res => res.json()).then(data => {
+                if (data.success) {
+                    alert('上传成功！');
+                    currentBase64 = null;
+                    document.getElementById('imageInput').value = ''; 
+                } else { alert('上传失败：' + data.message); }
+                btn.disabled = false; btn.textContent = '提交作品';
+            });
+        }
+
+        function deleteMyWork() {
+            if (!myCurrentWorkId) return;
+            if (!confirm('确定要删除本小组的作品吗？')) return;
+            const group = document.getElementById('groupSelect').value;
+            fetch(`/api/works/${myCurrentWorkId}`, { 
+                method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: user.role, group: group }) 
+            });
+        }
+
+        function openLightbox(imgSrc, group) {
+            document.getElementById('lightbox-img').src = imgSrc;
+            document.getElementById('lightbox-tag').textContent = group;
+            document.getElementById('lightbox').style.display = 'flex';
+        }
+        function closeLightbox(event) {
+            if (event.target.id === 'lightbox' || event.target.className === 'close-btn') {
+                document.getElementById('lightbox').style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

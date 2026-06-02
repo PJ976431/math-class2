@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教师端 - 平面图形复习</title>
+    <style>
+        body { font-family: 'Comic Sans MS', 'Microsoft YaHei', sans-serif; background: #fff3e0; margin: 0; padding: 20px; box-sizing: border-box; }
+        .header { text-align: center; color: #ef6c00; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap;}
+        .btn-clear { padding: 10px 20px; background: #e53935; color: white; border: none; border-radius: 10px; font-size: 16px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1);}
+        
+        .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; }
+        .gallery-item { background: white; border-radius: 15px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s; position: relative; }
+        .gallery-item:hover { transform: translateY(-5px); }
+        .gallery-item img { width: 100%; height: 200px; object-fit: contain; background: #fafafa; display: block; pointer-events: none; }
+        .gallery-item .info { padding: 10px; text-align: center; font-weight: bold; color: #e65100; pointer-events: none; }
+        
+        .btn-del { position: absolute; top: 10px; right: 10px; background: rgba(229, 57, 53, 0.9); color: white; border: none; border-radius: 50%; width: 30px; height: 30px; font-size: 18px; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10;}
+        .btn-del:hover { background: #c62828; }
+
+        #lightbox { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; }
+        #lightbox img { max-width: 90%; max-height: 85%; border-radius: 10px; box-shadow: 0 0 20px rgba(255,255,255,0.2); }
+        #lightbox .close-btn { position: absolute; top: 20px; right: 30px; color: white; font-size: 40px; cursor: pointer; font-weight: bold; }
+        #lightbox .group-tag { color: #ffd54f; font-size: 24px; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1 style="margin:0;">👩‍🏫 教师控制台：学生作品实时展示</h1>
+        <button class="btn-clear" onclick="clearAllWorks()">🗑️ 一键清空所有</button>
+    </div>
+    <div class="gallery" id="gallery"></div>
+
+    <div id="lightbox" onclick="closeLightbox(event)">
+        <span class="close-btn" onclick="closeLightbox(event)">&times;</span>
+        <img id="lightbox-img" src="">
+        <div class="group-tag" id="lightbox-tag"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const user = JSON.parse(localStorage.getItem('user'));
+        if (!user || user.role !== 'teacher') window.location.href = 'login.html';
+
+        const socket = io();
+        const gallery = document.getElementById('gallery');
+        let allWorks = [];
+
+        fetch('/api/works').then(res => res.json()).then(works => {
+            allWorks = works;
+            renderGallery();
+        });
+
+        socket.on('new_work', (work) => { allWorks.push(work); renderGallery(); });
+        socket.on('work_deleted', (id) => { allWorks = allWorks.filter(w => w.id !== id); renderGallery(); });
+        socket.on('works_cleared', () => { allWorks = []; renderGallery(); });
+
+        function renderGallery() {
+            gallery.innerHTML = '';
+            // 倒序显示，最新的在最前面
+            const sortedWorks = [...allWorks].reverse(); 
+            sortedWorks.forEach(work => {
+                const div = document.createElement('div');
+                div.className = 'gallery-item';
+                div.innerHTML = `
+                    <button class="btn-del" onclick="deleteWork(event, ${work.id})">&times;</button>
+                    <img src="${work.imageUrl}" alt="作品">
+                    <div class="info">${work.group} (${work.time})</div>
+                `;
+                div.onclick = () => openLightbox(work.imageUrl, work.group);
+                gallery.appendChild(div);
+            });
+        }
+
+        function deleteWork(event, id) {
+            event.stopPropagation(); // 阻止触发外层的点击放大事件
+            if (!confirm('确定删除该作品吗？')) return;
+            
+            fetch(`/api/works/${id}`, { 
+                method: 'DELETE', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: 'teacher' }) 
+            });
+        }
+
+        function clearAllWorks() {
+            if (!confirm('确定要一键清空所有小组的作品吗？此操作不可恢复！')) return;
+            fetch('/api/works', { 
+                method: 'DELETE', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role: 'teacher' }) 
+            });
+        }
+
+        function openLightbox(imgSrc, group) {
+            document.getElementById('lightbox-img').src = imgSrc;
+            document.getElementById('lightbox-tag').textContent = group;
+            document.getElementById('lightbox').style.display = 'flex';
+        }
+
+        function closeLightbox(event) {
+            if (event.target.id === 'lightbox' || event.target.className === 'close-btn') {
+                document.getElementById('lightbox').style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
