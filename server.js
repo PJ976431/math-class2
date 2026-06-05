@@ -10,12 +10,18 @@ const io = new Server(server);
 app.use(express.static(__dirname));
 app.use(express.json({ limit: '15mb' })); 
 
+// 需求③：将账号更新为 group1 到 group10
 const users = {
-    'student1': { password: '123456', role: 'student' },
-    'student2': { password: '123456', role: 'student' },
-    'student3': { password: '123456', role: 'student' },
-    'student4': { password: '123456', role: 'student' },
-    'student5': { password: '123456', role: 'student' },
+    'group1': { password: '123456', role: 'student' },
+    'group2': { password: '123456', role: 'student' },
+    'group3': { password: '123456', role: 'student' },
+    'group4': { password: '123456', role: 'student' },
+    'group5': { password: '123456', role: 'student' },
+    'group6': { password: '123456', role: 'student' },
+    'group7': { password: '123456', role: 'student' },
+    'group8': { password: '123456', role: 'student' },
+    'group9': { password: '123456', role: 'student' },
+    'group10': { password: '123456', role: 'student' },
     'teacher': { password: '123456', role: 'teacher' }
 };
 
@@ -36,13 +42,14 @@ app.get('/api/works', (req, res) => res.json(works));
 
 // 3. 上传作品 (接收 Base64 字符串)
 app.post('/api/upload', (req, res) => {
-    const { username, group, imageBase64 } = req.body;
+    // 修复：前端传的是 groupName，这里解构 groupName
+    const { username, groupName, imageBase64 } = req.body;
     if (!imageBase64) return res.status(400).json({ success: false, message: '图片数据为空' });
     
     const newWork = {
         id: Date.now(),
         username,
-        group,
+        group: groupName, // 将 groupName 赋值给 group 字段，以兼容教师端的 work.group 显示
         imageUrl: imageBase64, // 直接存 Base64 文本
         time: new Date().toLocaleTimeString()
     };
