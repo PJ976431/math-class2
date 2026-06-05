@@ -2,8 +2,10 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>教师端 - 平面图形复习</title>
+    <!-- 引入 Fabric.js 用于图片缩放、拖拽和画笔批注 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
     <style>
         body { font-family: 'Comic Sans MS', 'Microsoft YaHei', sans-serif; background: #fff3e0; margin: 0; padding: 20px; box-sizing: border-box; }
         .header { text-align: center; color: #ef6c00; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; gap: 20px; flex-wrap: wrap;}
@@ -18,10 +20,53 @@
         .btn-del { position: absolute; top: 10px; right: 10px; background: rgba(229, 57, 53, 0.9); color: white; border: none; border-radius: 50%; width: 30px; height: 30px; font-size: 18px; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10;}
         .btn-del:hover { background: #c62828; }
 
-        #lightbox { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; }
-        #lightbox img { max-width: 90%; max-height: 85%; border-radius: 10px; box-shadow: 0 0 20px rgba(255,255,255,0.2); }
-        #lightbox .close-btn { position: absolute; top: 20px; right: 30px; color: white; font-size: 40px; cursor: pointer; font-weight: bold; }
-        #lightbox .group-tag { color: #ffd54f; font-size: 24px; margin-top: 15px; font-weight: bold; }
+        /* Lightbox (放大查看页) 样式 */
+        #lightbox { 
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.95); z-index: 1000; 
+            flex-direction: column; align-items: center; justify-content: center;
+        }
+        .lightbox-canvas-wrapper {
+            width: 90vw;
+            height: 75vh;
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(255,255,255,0.1);
+            touch-action: none; /* 防止浏览器默认的双指缩放页面行为，交由 Canvas 处理 */
+        }
+        #lightbox-canvas {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* 需求⑤：取消点击黑色部分关闭，只保留右上角关闭按钮 */
+        #lightbox .close-btn { 
+            position: absolute; top: 20px; right: 30px; color: white; 
+            font-size: 30px; cursor: pointer; font-weight: bold; z-index: 1010;
+            background: rgba(255,255,255,0.15); width: 50px; height: 50px; 
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            transition: background 0.2s;
+        }
+        #lightbox .close-btn:hover { background: rgba(255,255,255,0.3); }
+        
+        #lightbox .group-tag { 
+            color: #ffd54f; font-size: 24px; margin-bottom: 15px; font-weight: bold; 
+        }
+        
+        /* 底部工具栏 */
+        .lightbox-toolbar {
+            margin-top: 15px; display: flex; gap: 15px; flex-wrap: wrap; justify-content: center;
+        }
+        .lb-btn {
+            padding: 10px 20px; border: none; border-radius: 20px; font-size: 16px; 
+            font-weight: bold; cursor: pointer; background: #444; color: white;
+            transition: all 0.2s;
+        }
+        .lb-btn:hover { background: #555; }
+        .lb-btn.active { background: #ff9800; color: white; box-shadow: 0 0 10px rgba(255, 152, 0, 0.5); }
+        .lb-btn.danger { background: #e53935; }
+        .lb-btn.danger:hover { background: #c62828; }
     </style>
 </head>
 <body>
@@ -31,10 +76,18 @@
     </div>
     <div class="gallery" id="gallery"></div>
 
-    <div id="lightbox" onclick="closeLightbox(event)">
-        <span class="close-btn" onclick="closeLightbox(event)">&times;</span>
-        <img id="lightbox-img" src="">
+    <!-- 放大查看弹窗 -->
+    <div id="lightbox">
+        <span class="close-btn" onclick="closeLightbox()">&times;</span>
         <div class="group-tag" id="lightbox-tag"></div>
+        <div class="lightbox-canvas-wrapper">
+            <canvas id="lightbox-canvas"></canvas>
+        </div>
+        <div class="lightbox-toolbar">
+            <button id="btn-pan" class="lb-btn active" onclick="setLightboxMode('pan')">✋ 移动/缩放</button>
+            <button id="btn-draw" class="lb-btn" onclick="setLightboxMode('draw')">✏️ 画笔批注</button>
+            <button class="lb-btn danger" onclick="clearLightboxDrawings()">🗑️ 清除画笔</button>
+        </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -57,7 +110,6 @@
 
         function renderGallery() {
             gallery.innerHTML = '';
-            // 倒序显示，最新的在最前面
             const sortedWorks = [...allWorks].reverse(); 
             sortedWorks.forEach(work => {
                 const div = document.createElement('div');
@@ -73,9 +125,8 @@
         }
 
         function deleteWork(event, id) {
-            event.stopPropagation(); // 阻止触发外层的点击放大事件
+            event.stopPropagation(); 
             if (!confirm('确定删除该作品吗？')) return;
-            
             fetch(`/api/works/${id}`, { 
                 method: 'DELETE', 
                 headers: { 'Content-Type': 'application/json' },
@@ -92,15 +143,137 @@
             });
         }
 
-        function openLightbox(imgSrc, group) {
-            document.getElementById('lightbox-img').src = imgSrc;
-            document.getElementById('lightbox-tag').textContent = group;
-            document.getElementById('lightbox').style.display = 'flex';
+        // ================= 需求⑤：放大、缩放、画笔逻辑 =================
+        let lbCanvas = null;
+        let lbImage = null;
+
+        function initLightboxCanvas() {
+            if (lbCanvas) return;
+            lbCanvas = new fabric.Canvas('lightbox-canvas', {
+                backgroundColor: '#222',
+                selection: false
+            });
+            
+            // 1. 移动端双指缩放 (Pinch to Zoom)
+            let initialDistance = 0;
+            let initialScale = 1;
+            let isPinching = false;
+
+            function getDistance(t1, t2) {
+                return Math.sqrt(Math.pow(t2.pageX - t1.pageX, 2) + Math.pow(t2.pageY - t1.pageY, 2));
+            }
+
+            lbCanvas.upperCanvasEl.addEventListener('touchstart', function(e) {
+                if (e.touches.length === 2) {
+                    isPinching = true;
+                    initialDistance = getDistance(e.touches[0], e.touches[1]);
+                    if(lbImage) initialScale = lbImage.scaleX;
+                }
+            }, { passive: false });
+
+            lbCanvas.upperCanvasEl.addEventListener('touchmove', function(e) {
+                if (isPinching && e.touches.length === 2 && lbImage) {
+                    e.preventDefault(); // 阻止页面默认缩放
+                    let currentDistance = getDistance(e.touches[0], e.touches[1]);
+                    let scale = initialScale * (currentDistance / initialDistance);
+                    lbImage.scale(scale);
+                    lbCanvas.renderAll();
+                }
+            }, { passive: false });
+
+            lbCanvas.upperCanvasEl.addEventListener('touchend', function(e) {
+                if (e.touches.length < 2) isPinching = false;
+            });
+            
+            // 2. PC端鼠标滚轮缩放
+            lbCanvas.on('mouse:wheel', function(opt) {
+                var delta = opt.e.deltaY;
+                var zoom = lbCanvas.getZoom();
+                zoom *= 0.999 ** delta;
+                if (zoom > 20) zoom = 20;
+                if (zoom < 0.1) zoom = 0.1;
+                lbCanvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+                opt.e.preventDefault();
+                opt.e.stopPropagation();
+            });
         }
 
-        function closeLightbox(event) {
-            if (event.target.id === 'lightbox' || event.target.className === 'close-btn') {
-                document.getElementById('lightbox').style.display = 'none';
+        function openLightbox(imgSrc, group) {
+            document.getElementById('lightbox-tag').textContent = group;
+            document.getElementById('lightbox').style.display = 'flex';
+            
+            initLightboxCanvas();
+            
+            const wrapper = document.querySelector('.lightbox-canvas-wrapper');
+            lbCanvas.setWidth(wrapper.clientWidth);
+            lbCanvas.setHeight(wrapper.clientHeight);
+            lbCanvas.clear();
+            lbCanvas.setZoom(1); // 重置画布缩放
+            
+            fabric.Image.fromURL(imgSrc, function(img) {
+                lbImage = img;
+                // 计算初始缩放比例，使图片适应屏幕
+                let scale = Math.min(
+                    (wrapper.clientWidth * 0.9) / img.width,
+                    (wrapper.clientHeight * 0.9) / img.height
+                );
+                img.scale(scale);
+                img.set({
+                    left: wrapper.clientWidth / 2,
+                    top: wrapper.clientHeight / 2,
+                    originX: 'center',
+                    originY: 'center',
+                    selectable: true,
+                    evented: true,
+                    hasControls: false, // 隐藏四周的控制点
+                    hasBorders: false
+                });
+                lbCanvas.add(img);
+                lbCanvas.setActiveObject(img); // 默认选中以便拖动
+                setLightboxMode('pan');
+            }, { crossOrigin: 'anonymous' });
+        }
+
+        function setLightboxMode(mode) {
+            if (!lbCanvas || !lbImage) return;
+            
+            document.getElementById('btn-pan').classList.toggle('active', mode === 'pan');
+            document.getElementById('btn-draw').classList.toggle('active', mode === 'draw');
+            
+            if (mode === 'pan') {
+                lbCanvas.isDrawingMode = false;
+                lbImage.set({ selectable: true, evented: true });
+                lbCanvas.setActiveObject(lbImage);
+                lbCanvas.defaultCursor = 'move';
+            } else if (mode === 'draw') {
+                lbCanvas.isDrawingMode = true;
+                lbCanvas.freeDrawingBrush.color = '#ff1744'; // 红色画笔
+                lbCanvas.freeDrawingBrush.width = 5;
+                lbImage.set({ selectable: false, evented: false }); // 禁用图片拖拽，防止和画笔冲突
+                lbCanvas.discardActiveObject();
+                lbCanvas.defaultCursor = 'crosshair';
+            }
+            lbCanvas.renderAll();
+        }
+
+        function clearLightboxDrawings() {
+            if (!lbCanvas) return;
+            // 移除所有非图片的对象（即画笔线条）
+            const objects = lbCanvas.getObjects();
+            objects.forEach(obj => {
+                if (obj.type !== 'image') {
+                    lbCanvas.remove(obj);
+                }
+            });
+            lbCanvas.renderAll();
+        }
+
+        // 需求⑤：只能通过右上角“×”键进行返回，去掉了点击背景关闭的逻辑
+        function closeLightbox() {
+            document.getElementById('lightbox').style.display = 'none';
+            if (lbCanvas) {
+                lbCanvas.clear();
+                lbImage = null;
             }
         }
     </script>
