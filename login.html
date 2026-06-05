@@ -19,11 +19,17 @@
     <div class="login-box">
         <h2>🌟 图形王国 🌟</h2>
         <select id="username">
-            <option value="student1">学生账号 1</option>
-            <option value="student2">学生账号 2</option>
-            <option value="student3">学生账号 3</option>
-            <option value="student4">学生账号 4</option>
-            <option value="student5">学生账号 5</option>
+            <!-- 需求③：修改为第一小组到第十小组 -->
+            <option value="group1">第一小组</option>
+            <option value="group2">第二小组</option>
+            <option value="group3">第三小组</option>
+            <option value="group4">第四小组</option>
+            <option value="group5">第五小组</option>
+            <option value="group6">第六小组</option>
+            <option value="group7">第七小组</option>
+            <option value="group8">第八小组</option>
+            <option value="group9">第九小组</option>
+            <option value="group10">第十小组</option>
             <option value="teacher">教师账号</option>
         </select>
         <input type="password" id="password" value="123456" readonly style="background: #f9f9f9; color: #999;">
@@ -45,6 +51,9 @@
                     document.getElementById('errorMsg').textContent = data.message;
                     document.getElementById('errorMsg').style.display = 'block';
                 }
+            }).catch(err => {
+                document.getElementById('errorMsg').textContent = '网络错误，请检查服务器';
+                document.getElementById('errorMsg').style.display = 'block';
             });
         }
     </script>
