@@ -107,6 +107,38 @@
         }
         .submit-btn:active { transform: scale(0.98); }
 
+        .work-preview-box {
+            display: none; 
+            background: var(--card); padding: 15px; border-radius: 12px; 
+            text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            border: 2px dashed var(--accent); margin-top: 10px;
+        }
+        .work-preview-box.show { display: block; }
+        .preview-title { font-size: 16px; font-weight: bold; color: #2E7D32; margin-bottom: 10px; }
+        #previewImg { 
+            max-width: 100%; max-height: 200px; border-radius: 8px; 
+            border: 1px solid #eee; cursor: pointer; transition: transform 0.2s;
+        }
+        #previewImg:active { transform: scale(0.98); }
+        .delete-work-btn {
+            margin-top: 12px; padding: 10px 24px; background: var(--danger); color: white;
+            border: none; border-radius: 20px; font-size: 15px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 10px rgba(255, 105, 97, 0.3);
+        }
+        .delete-work-btn:active { transform: scale(0.95); }
+
+        .student-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 9998; justify-content: center; align-items: center;
+        }
+        .student-modal.show { display: flex; }
+        .student-modal img { max-width: 90%; max-height: 90%; border-radius: 10px; box-shadow: 0 0 20px rgba(255,255,255,0.2); }
+        .modal-close {
+            position: absolute; top: 20px; right: 30px; color: white; font-size: 40px; cursor: pointer;
+            background: rgba(255,255,255,0.15); width: 50px; height: 50px; border-radius: 50%; 
+            display: flex; align-items: center; justify-content: center;
+        }
+
         .toast {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: rgba(45, 55, 72, 0.9); color: white; padding: 12px 24px; border-radius: 10px;
@@ -167,13 +199,24 @@
 
     <div class="container footer">
         <button class="submit-btn" onclick="submitWork()">📤 上传提交作品</button>
+        
+        <div id="workPreviewBox" class="work-preview-box">
+            <div class="preview-title">✅ 已上传作品 (点击可放大)</div>
+            <img id="previewImg" src="" alt="我的作品" onclick="openStudentModal()">
+            <br>
+            <button class="delete-work-btn" onclick="deleteMyWork()">🗑️ 删除作品并重新提交</button>
+        </div>
     </div>
+</div>
+
+<div id="studentModal" class="student-modal" onclick="closeStudentModal(event)">
+    <span class="modal-close">&times;</span>
+    <img id="modalImg" src="" alt="放大查看">
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-    // 1. 读取登录信息，解析小组名称
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     let currentGroupName = '未知小组';
     if (user.username && user.username.startsWith('group')) {
@@ -182,7 +225,6 @@
         currentGroupName = `第${numMap[num-1] || num}小组`;
     }
 
-    // 2. 初始化 Fabric.js 画布
     const wrapper = document.getElementById('canvasWrapper');
     const canvas = new fabric.Canvas('mainCanvas', { 
         backgroundColor: 'transparent', 
@@ -190,7 +232,6 @@
         preserveObjectStacking: true 
     });
     
-    // 隐藏缩放控制点，仅保留旋转控制点
     fabric.Object.prototype.setControlsVisibility({
         tl: false, tr: false, bl: false, br: false, 
         ml: false, mr: false, mt: false, mb: false, 
@@ -198,11 +239,13 @@
     });
 
     const GRID_SIZE = 30; 
-    let history = [], isRestoring = false, isCutting = false, currentMode = 'select';
+    
+    // 【核心修改】：使用更稳定纯粹的 historyStack 栈结构
+    let historyStack = [], isRestoring = false, isCutting = false, currentMode = 'select';
     let currentShapeType = '';
     let cutLine = null, cutStart = null, cutEnd = null;
+    let myWorkId = null; 
 
-    // 3. 图形基础数据 (按 1.5 倍缩放，适配 30px 网格)
     const SHAPE_POINTS = {
         rectangle: [{x:0,y:0}, {x:120,y:0}, {x:120,y:90}, {x:0,y:90}], 
         square: [{x:0,y:0}, {x:90,y:0}, {x:90,y:90}, {x:0,y:90}],      
@@ -248,7 +291,6 @@
         if (obj._hasAutoTraced === undefined) obj._hasAutoTraced = false;
     }
 
-    // 4. 页面切换与图形生成
     function selectShape(type) {
         currentShapeType = type;
         document.getElementById('targetShapeText').innerText = SHAPE_NAMES[type];
@@ -292,7 +334,6 @@
         } else {
             const offset = 180; 
             let targetX = center.x, targetY = center.y;
-            // 位置微调：左上+2格下，右上+2格下，左下+1格上，右下+2格上 (1格=30px)
             if (position === 'top-left') { targetX -= offset; targetY -= offset; targetY += 60; } 
             else if (position === 'top-right') { targetX += offset; targetY -= offset; targetY += 60; } 
             else if (position === 'bottom-left') { targetX -= offset; targetY += offset; targetY -= 30; } 
@@ -312,7 +353,6 @@
             perPixelTargetFind: true, targetFindTolerance: 5 
         });
 
-        // 基础图形彻底锁定：不可移动、旋转、选中、剪切、填色
         if (isBase) {
             shape.set({ 
                 lockMovementX: true, lockMovementY: true, lockRotation: true,
@@ -327,10 +367,9 @@
         canvas.add(shape);
         updateTraceState(shape); 
         if (!isBase) canvas.setActiveObject(shape);
-        saveState();
+        saveState(); // 添加图形后保存状态
     }
 
-    // 5. 画布事件监听 (旋转吸附、痕迹生成)
     canvas.on('object:rotating', function(opt) {
         const obj = opt.target;
         let angle = obj.angle % 360;
@@ -357,10 +396,10 @@
                 obj._hasAutoTraced = true; 
             }
             updateTraceState(obj); 
+            saveState(); // 移动/旋转结束后保存状态
         }
     });
 
-    // 6. 模式切换
     function setMode(mode) {
         currentMode = mode;
         canvas.selection = (mode !== 'cut'); 
@@ -386,43 +425,61 @@
         canvas.renderAll();
     }
 
-    // 7. 历史记录管理
+    // 【核心修改】：重构历史记录管理，移除全局监听，采用精准手动保存
     function saveState() {
         if (isRestoring || isCutting) return; 
-        history.push(JSON.stringify(canvas.toJSON(['shapeType', 'isCutPart', 'isBase', 'isTrace', '_lastTraceState', '_hasAutoTraced', '_isLocked'])));
-        if (history.length > 30) history.shift();
+        const stateStr = JSON.stringify(canvas.toJSON(['shapeType', 'isCutPart', 'isBase', 'isTrace', '_lastTraceState', '_hasAutoTraced', '_isLocked']));
+        historyStack.push(stateStr);
+        
+        // 限制最大撤销步数，防止内存溢出
+        if (historyStack.length > 50) {
+            historyStack.shift();
+        }
     }
-    canvas.on('object:added', saveState);
-    canvas.on('object:removed', saveState);
 
     function undo() {
-        if (history.length <= 1) return showToast('已经到最后一步啦');
+        // 如果栈里只有1个状态（即初始状态），则无法再撤销
+        if (historyStack.length <= 1) {
+            return showToast('已经到最初状态啦');
+        }
+        
+        // 弹出当前状态
+        historyStack.pop();
+        // 获取上一步状态
+        const prevState = historyStack[historyStack.length - 1];
+        
         isRestoring = true;
-        history.pop(); 
-        const prevState = history[history.length - 1];
         canvas.clear();
-        if (prevState) {
-            canvas.loadFromJSON(prevState, () => { 
-                canvas.renderAll(); 
-                isRestoring = false; 
-                setMode(currentMode);
-                canvas.getObjects().forEach(obj => {
-                    if (obj.type === 'polygon' && !obj._lastTraceState) updateTraceState(obj);
-                });
+        canvas.loadFromJSON(prevState, () => { 
+            canvas.renderAll(); 
+            isRestoring = false; 
+            setMode(currentMode);
+            canvas.getObjects().forEach(obj => {
+                if (obj.type === 'polygon' && !obj._lastTraceState) updateTraceState(obj);
             });
-        } else { isRestoring = false; }
+        });
     }
 
     function resetCanvas() {
         if (confirm('确定要重置画布吗？所有操作将清空。')) {
-            canvas.clear(); history = [];
+            canvas.clear(); 
+            historyStack = []; // 清空历史栈
             if (currentShapeType) addShapeToCanvas(currentShapeType, true, null);
             setMode('select');
         }
     }
 
-    // 8. 图形操作工具
-    function deleteObj() { const obj = canvas.getActiveObject(); if (obj && !obj.isBase) { canvas.remove(obj); saveState(); } else showToast('请先选中非基础图形'); }
+    // 【核心修改】：补全 deleteObj 中的 saveState 调用
+    function deleteObj() { 
+        const obj = canvas.getActiveObject(); 
+        if (obj && !obj.isBase) { 
+            canvas.remove(obj); 
+            saveState(); 
+        } else {
+            showToast('请先选中非基础图形');
+        } 
+    }
+    
     function rotateObj() { const obj = canvas.getActiveObject(); if (obj && !obj.isBase) { obj.rotate((obj.angle || 0) + 90); canvas.renderAll(); saveState(); } else showToast('基础图形不可旋转'); }
     function flipX() { const obj = canvas.getActiveObject(); if (obj && !obj.isBase) { obj.set('flipX', !obj.flipX); canvas.renderAll(); saveState(); } }
     function flipY() { const obj = canvas.getActiveObject(); if (obj && !obj.isBase) { obj.set('flipY', !obj.flipY); canvas.renderAll(); saveState(); } }
@@ -446,7 +503,6 @@
         });
     }
 
-    // 9. 固定与解除固定
     function toggleLock() {
         const obj = canvas.getActiveObject();
         if (!obj) return showToast('请先选中图形');
@@ -476,7 +532,6 @@
         else showToast('没有已固定的图形');
     }
 
-    // 10. 痕迹保留功能
     function createGhostTrace(obj, state) {
         const commonProps = { 
             left: state.left, top: state.top, angle: state.angle, 
@@ -507,7 +562,6 @@
         showToast('✅ 痕迹已保留！');
     }
 
-    // 11. 剪切功能 (纯自由丝滑画线，无延伸，精准裁剪)
     function drawCutLine(p1, p2) {
         if (cutLine) canvas.remove(cutLine);
         cutLine = new fabric.Polyline([p1, p2], {
@@ -559,7 +613,6 @@
             const absPoints = getAbsolutePoints(poly);
             const EPS = 1e-5;
             
-            // 核心算法：检测“线段 p1-p2”是否真实穿过了该多边形
             let segmentIntersections = 0;
             for (let i = 0; i < absPoints.length; i++) {
                 const curr = absPoints[i];
@@ -574,7 +627,6 @@
                 }
             }
             
-            // 如果线段没有真实穿过该多边形，直接跳过，绝不延伸误伤
             if (segmentIntersections < 2) return;
 
             const sides = absPoints.map(p => {
@@ -635,29 +687,28 @@
         canvas.renderAll(); 
         
         if (hasCut) { 
-            saveState(); 
+            saveState(); // 剪切完成后保存状态
             showToast('✂️ 剪切成功！'); 
         } else {
             showToast('剪切线未穿过任何图形');
         }
     }
 
-    // 12. 截图与上传提交
     function submitWork() {
+        if (myWorkId) {
+            if (!confirm('您已提交过作品，是否覆盖当前作品？')) return;
+        }
+
         showToast('正在生成高清图片...');
         canvas.discardActiveObject(); canvas.renderAll();
         const targetArea = document.getElementById('canvasWrapper');
         
         html2canvas(targetArea, { 
-            scale: 2, 
-            useCORS: true, 
-            backgroundColor: '#FFFFFF', 
-            windowWidth: targetArea.scrollWidth, 
-            windowHeight: targetArea.scrollHeight 
+            scale: 2, useCORS: true, backgroundColor: '#FFFFFF', 
+            windowWidth: targetArea.scrollWidth, windowHeight: targetArea.scrollHeight 
         }).then(canvasImg => {
             const imgData = canvasImg.toDataURL('image/jpeg', 0.92);
             
-            // 发送 POST 请求到后端
             fetch('/api/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -668,7 +719,11 @@
                 })
             }).then(res => res.json()).then(data => {
                 if (data.success) {
+                    myWorkId = data.workId; 
                     showToast(`✅ ${currentGroupName} 提交成功！`);
+                    
+                    document.getElementById('previewImg').src = imgData;
+                    document.getElementById('workPreviewBox').classList.add('show');
                 } else {
                     showToast('提交失败，请重试');
                 }
@@ -682,7 +737,37 @@
         });
     }
 
-    // 13. Toast 提示框
+    function openStudentModal() {
+        const imgSrc = document.getElementById('previewImg').src;
+        document.getElementById('modalImg').src = imgSrc;
+        document.getElementById('studentModal').classList.add('show');
+    }
+
+    function closeStudentModal(e) {
+        if (e.target.classList.contains('student-modal') || e.target.classList.contains('modal-close')) {
+            document.getElementById('studentModal').classList.remove('show');
+        }
+    }
+
+    function deleteMyWork() {
+        if (!myWorkId) return showToast('没有可删除的作品');
+        if (!confirm('确定要删除已上传的作品吗？删除后可重新绘制上传。')) return;
+        
+        fetch(`/api/works/${myWorkId}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'student', username: user.username })
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                myWorkId = null;
+                document.getElementById('workPreviewBox').classList.remove('show');
+                showToast('🗑️ 作品已删除，教师端已同步');
+            } else {
+                showToast('删除失败');
+            }
+        }).catch(() => showToast('网络错误'));
+    }
+
     function showToast(msg) {
         const toast = document.getElementById('toast');
         toast.innerText = msg; 
@@ -691,7 +776,6 @@
         toast.timer = setTimeout(() => { toast.style.display = 'none'; }, 2000);
     }
     
-    // 阻止 iOS 双指缩放页面
     document.addEventListener('gesturestart', e => e.preventDefault());
 </script>
 </body>
