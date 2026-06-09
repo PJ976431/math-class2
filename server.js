@@ -42,10 +42,17 @@ app.get('/api/works', (req, res) => res.json(works));
 
 // 3. 上传作品 (接收 Base64 字符串)
 app.post('/api/upload', (req, res) => {
-    // 修复：前端传的是 groupName，这里解构 groupName
     const { username, groupName, imageBase64 } = req.body;
     if (!imageBase64) return res.status(400).json({ success: false, message: '图片数据为空' });
     
+    // 【修改1】：处理同组重复上传覆盖逻辑，防止教师端出现同一小组的多个作品
+    const existingIndex = works.findIndex(w => w.username === username);
+    if (existingIndex !== -1) {
+        const oldWork = works[existingIndex];
+        works.splice(existingIndex, 1);
+        io.emit('work_deleted', oldWork.id); // 通知教师端移除旧作品
+    }
+
     const newWork = {
         id: Date.now(),
         username,
@@ -56,19 +63,24 @@ app.post('/api/upload', (req, res) => {
     
     works.push(newWork);
     io.emit('new_work', newWork); 
-    res.json({ success: true, work: newWork });
+    
+    // 【修改2】：返回 workId，以匹配前端 student.html 中的 myWorkId = data.workId
+    res.json({ success: true, workId: newWork.id, work: newWork });
 });
 
 // 4. 删除单个作品
 app.delete('/api/works/:id', (req, res) => {
     const id = parseInt(req.params.id);
-    const { role, group } = req.body; 
+    
+    // 【修改3】：前端学生端传的是 username，教师端传的是 role，这里解构 username
+    const { role, username } = req.body; 
     const index = works.findIndex(w => w.id === id);
     
     if (index === -1) return res.json({ success: false, message: '作品不存在' });
     const work = works[index];
 
-    if (role !== 'teacher' && work.group !== group) {
+    // 【修改4】：校验权限，如果是学生，只能删除自己 username 对应的作品
+    if (role !== 'teacher' && work.username !== username) {
         return res.json({ success: false, message: '无权删除其他小组作品' });
     }
 
