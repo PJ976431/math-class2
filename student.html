@@ -26,6 +26,18 @@
         .page { display: none; flex-direction: column; min-height: 100vh; }
         .page.active { display: flex; }
 
+        /* ========== 新增：顶部栏与退出按钮样式 ========== */
+        .page-top-bar {
+            width: 100%; max-width: 800px; margin: 0 auto;
+            display: flex; justify-content: flex-end; padding: 15px 20px 0;
+        }
+        .logout-btn {
+            padding: 8px 18px; background: #FF6961; color: white; border: none;
+            border-radius: 20px; font-size: 14px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 2px 8px rgba(255, 105, 97, 0.3); display: flex; align-items: center; gap: 5px;
+        }
+        .logout-btn:active { transform: scale(0.95); background: #e55a53; }
+
         #page1 { justify-content: center; align-items: center; padding: 30px 20px; gap: 40px; }
         #page1 .header h1 { font-size: 32px; color: #2196F3; letter-spacing: 4px; text-shadow: 2px 2px 4px rgba(0,0,0,0.1); }
         #page1 .selection-text {
@@ -143,12 +155,17 @@
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
             background: rgba(45, 55, 72, 0.9); color: white; padding: 12px 24px; border-radius: 10px;
             font-size: 15px; z-index: 9999; display: none; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            text-align: center; max-width: 80%;
         }
     </style>
 </head>
 <body>
 
+<!-- ==================== 页面1：选择基础图形 ==================== -->
 <div id="page1" class="page active">
+    <div class="page-top-bar">
+        <button class="logout-btn" onclick="logout()">🚪 退出登录</button>
+    </div>
     <div class="header"><h1>📐 平面图形复习 📐</h1></div>
     <div class="selection-text">我选择 <span class="selected-shape-name">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> 作为基础图形。</div>
     <div class="shape-selector-page1">
@@ -158,7 +175,11 @@
     </div>
 </div>
 
+<!-- ==================== 页面2：操作与画布 ==================== -->
 <div id="page2" class="page">
+    <div class="page-top-bar">
+        <button class="logout-btn" onclick="logout()">🚪 退出登录</button>
+    </div>
     <div class="container">
         <div class="selection-text">转化为 <span class="selected-shape-name" id="targetShapeText">___</span></div>
         
@@ -217,6 +238,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
+    // ==================== 用户与状态初始化 ====================
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     let currentGroupName = '未知小组';
     if (user.username && user.username.startsWith('group')) {
@@ -224,6 +246,10 @@
         const numMap = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
         currentGroupName = `第${numMap[num-1] || num}小组`;
     }
+
+    // 【新增】：持久化存储 Key，按小组隔离数据
+    const STORAGE_KEY = `student_progress_${user.username}`;
+    let saveTimer = null; // 防抖定时器
 
     const wrapper = document.getElementById('canvasWrapper');
     const canvas = new fabric.Canvas('mainCanvas', { 
@@ -239,8 +265,6 @@
     });
 
     const GRID_SIZE = 30; 
-    
-    // 【核心修改】：使用更稳定纯粹的 historyStack 栈结构
     let historyStack = [], isRestoring = false, isCutting = false, currentMode = 'select';
     let currentShapeType = '';
     let cutLine = null, cutStart = null, cutEnd = null;
@@ -291,11 +315,151 @@
         if (obj._hasAutoTraced === undefined) obj._hasAutoTraced = false;
     }
 
+    // ==================== 核心修改：状态持久化与防误触 ====================
+
+    /**
+     * 【新增】保存进度到 LocalStorage (带防抖)
+     */
+    function saveProgress() {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            if (!currentShapeType) return; // 还没选图形，不存
+            
+            const customProps = ['shapeType', 'isCutPart', 'isBase', 'isTrace', '_lastTraceState', '_hasAutoTraced', '_isLocked'];
+            const state = {
+                currentShapeType: currentShapeType,
+                canvasJSON: canvas.toJSON(customProps),
+                myWorkId: myWorkId,
+                previewImg: document.getElementById('previewImg').src,
+                currentPage: document.getElementById('page2').classList.contains('active') ? 'page2' : 'page1'
+            };
+            
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            } catch(e) {
+                console.warn('存储空间不足，尝试不保存预览图', e);
+                // 如果超出容量，去掉 base64 图片再存一次
+                state.previewImg = ''; 
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(err) {}
+            }
+        }, 500); // 500ms 防抖，避免频繁写入卡顿
+    }
+
+    /**
+     * 【新增】从 LocalStorage 恢复进度
+     */
+    function loadProgress() {
+        try {
+            const savedStr = localStorage.getItem(STORAGE_KEY);
+            if (!savedStr) return false;
+            const state = JSON.parse(savedStr);
+            if (!state.currentShapeType) return false;
+
+            // 恢复基础变量
+            currentShapeType = state.currentShapeType;
+            myWorkId = state.myWorkId || null;
+
+            if (state.currentPage === 'page2') {
+                // 切换页面
+                document.getElementById('page1').classList.remove('active');
+                document.getElementById('page2').classList.add('active');
+                
+                // 恢复 UI 文本
+                document.getElementById('targetShapeText').innerText = SHAPE_NAMES[currentShapeType];
+                
+                // 恢复目标图形按钮
+                const list = document.getElementById('targetShapesList');
+                list.innerHTML = '';
+                const positions = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];
+                let posIndex = 0;
+                Object.keys(SHAPE_NAMES).forEach(key => {
+                    if (key !== currentShapeType) {
+                        const btn = document.createElement('div');
+                        btn.className = 'target-shape-btn';
+                        btn.innerHTML = getShapeSVG(key); 
+                        const pos = positions[posIndex % 4];
+                        btn.onclick = () => addShapeToCanvas(key, false, pos);
+                        list.appendChild(btn);
+                        posIndex++;
+                    }
+                });
+
+                // 恢复画布
+                if (state.canvasJSON && state.canvasJSON.objects && state.canvasJSON.objects.length > 0) {
+                    canvas.loadFromJSON(state.canvasJSON, () => {
+                        canvas.renderAll();
+                        setMode('select');
+                        // 恢复 trace 状态
+                        canvas.getObjects().forEach(obj => {
+                            if (obj.type === 'polygon' && !obj._lastTraceState) updateTraceState(obj);
+                        });
+                        // 初始化历史栈（将当前恢复的状态作为初始栈底）
+                        const customProps = ['shapeType', 'isCutPart', 'isBase', 'isTrace', '_lastTraceState', '_hasAutoTraced', '_isLocked'];
+                        historyStack = [JSON.stringify(canvas.toJSON(customProps))];
+                        resizeCanvas(); // 确保尺寸正确
+                    });
+                } else {
+                    addShapeToCanvas(currentShapeType, true, null);
+                }
+
+                // 恢复预览图
+                if (myWorkId && state.previewImg && state.previewImg !== '' && state.previewImg !== window.location.href) {
+                    document.getElementById('previewImg').src = state.previewImg;
+                    document.getElementById('workPreviewBox').classList.add('show');
+                }
+
+                // 启动防误触拦截
+                setupHistoryGuard();
+                showToast('✅ 已自动恢复上次的操作进度');
+                return true;
+            }
+        } catch(e) {
+            console.error('恢复进度失败:', e);
+        }
+        return false;
+    }
+
+    /**
+     * 退出登录（清除状态并跳转）
+     */
+    function logout() {
+        if (confirm('确定要退出登录吗？\n当前未提交的操作进度将被清除！')) {
+            localStorage.removeItem(STORAGE_KEY); // 清除本小组进度
+            localStorage.removeItem('user');      // 清除登录状态
+            
+            // 【修正】：改为 login.html，并使用 replace 防止在登录页误触后退又回到画图页
+            window.location.replace('login.html'); 
+        }
+    }
+
+
+    /**
+     * 【新增】防误触返回拦截 (History API)
+     */
+    let isGuarding = false;
+    function setupHistoryGuard() {
+        if (isGuarding) return;
+        isGuarding = true;
+        
+        // 推入一个假的历史状态
+        history.pushState({ page: 'page2_guard' }, '', '');
+        
+        window.addEventListener('popstate', function(e) {
+            // 当用户右滑或点击浏览器后退时，会触发 popstate
+            // 我们再次 pushState 把它顶回去，阻止真正后退到登录页
+            history.pushState({ page: 'page2_guard' }, '', '');
+            showToast('⚠️ 请通过右上角“退出登录”按钮返回');
+        });
+    }
+
+    // ==================== 原有业务逻辑 ====================
+
     function selectShape(type) {
         currentShapeType = type;
         document.getElementById('targetShapeText').innerText = SHAPE_NAMES[type];
         document.getElementById('page1').classList.remove('active');
         document.getElementById('page2').classList.add('active');
+        
         setTimeout(() => {
             resizeCanvas();
             addShapeToCanvas(type, true, null); 
@@ -317,6 +481,10 @@
                 }
             });
             setMode('select'); 
+            
+            // 【修改】：进入 page2 后启动防误触拦截，并保存初始状态
+            setupHistoryGuard();
+            saveProgress();
         }, 100);
     }
 
@@ -367,7 +535,7 @@
         canvas.add(shape);
         updateTraceState(shape); 
         if (!isBase) canvas.setActiveObject(shape);
-        saveState(); // 添加图形后保存状态
+        saveState(); 
     }
 
     canvas.on('object:rotating', function(opt) {
@@ -396,7 +564,7 @@
                 obj._hasAutoTraced = true; 
             }
             updateTraceState(obj); 
-            saveState(); // 移动/旋转结束后保存状态
+            saveState(); 
         }
     });
 
@@ -425,27 +593,26 @@
         canvas.renderAll();
     }
 
-    // 【核心修改】：重构历史记录管理，移除全局监听，采用精准手动保存
     function saveState() {
         if (isRestoring || isCutting) return; 
-        const stateStr = JSON.stringify(canvas.toJSON(['shapeType', 'isCutPart', 'isBase', 'isTrace', '_lastTraceState', '_hasAutoTraced', '_isLocked']));
+        const customProps = ['shapeType', 'isCutPart', 'isBase', 'isTrace', '_lastTraceState', '_hasAutoTraced', '_isLocked'];
+        const stateStr = JSON.stringify(canvas.toJSON(customProps));
         historyStack.push(stateStr);
         
-        // 限制最大撤销步数，防止内存溢出
         if (historyStack.length > 50) {
             historyStack.shift();
         }
+        
+        // 【修改】：每次保存历史栈时，同步持久化到 LocalStorage
+        saveProgress();
     }
 
     function undo() {
-        // 如果栈里只有1个状态（即初始状态），则无法再撤销
         if (historyStack.length <= 1) {
             return showToast('已经到最初状态啦');
         }
         
-        // 弹出当前状态
         historyStack.pop();
-        // 获取上一步状态
         const prevState = historyStack[historyStack.length - 1];
         
         isRestoring = true;
@@ -457,19 +624,22 @@
             canvas.getObjects().forEach(obj => {
                 if (obj.type === 'polygon' && !obj._lastTraceState) updateTraceState(obj);
             });
+            // 【修改】：撤销后也需要同步持久化
+            saveProgress();
         });
     }
 
     function resetCanvas() {
         if (confirm('确定要重置画布吗？所有操作将清空。')) {
             canvas.clear(); 
-            historyStack = []; // 清空历史栈
+            historyStack = []; 
             if (currentShapeType) addShapeToCanvas(currentShapeType, true, null);
             setMode('select');
+            // 【修改】：重置后同步持久化
+            saveProgress();
         }
     }
 
-    // 【核心修改】：补全 deleteObj 中的 saveState 调用
     function deleteObj() { 
         const obj = canvas.getActiveObject(); 
         if (obj && !obj.isBase) { 
@@ -687,7 +857,7 @@
         canvas.renderAll(); 
         
         if (hasCut) { 
-            saveState(); // 剪切完成后保存状态
+            saveState(); 
             showToast('✂️ 剪切成功！'); 
         } else {
             showToast('剪切线未穿过任何图形');
@@ -724,6 +894,9 @@
                     
                     document.getElementById('previewImg').src = imgData;
                     document.getElementById('workPreviewBox').classList.add('show');
+                    
+                    // 【修改】：提交成功后同步持久化
+                    saveProgress();
                 } else {
                     showToast('提交失败，请重试');
                 }
@@ -761,7 +934,10 @@
             if (data.success) {
                 myWorkId = null;
                 document.getElementById('workPreviewBox').classList.remove('show');
+                document.getElementById('previewImg').src = ''; // 清空预览图
                 showToast('🗑️ 作品已删除，教师端已同步');
+                // 【修改】：删除后同步持久化
+                saveProgress();
             } else {
                 showToast('删除失败');
             }
@@ -777,6 +953,18 @@
     }
     
     document.addEventListener('gesturestart', e => e.preventDefault());
+
+    // ==================== 页面加载初始化 ====================
+    window.addEventListener('DOMContentLoaded', () => {
+        // 尝试恢复进度，如果恢复成功，loadProgress 内部会切换页面并提示
+        const restored = loadProgress();
+        
+        // 如果没有恢复进度，确保 page1 是显示的（HTML 中已默认 active）
+        if (!restored) {
+            document.getElementById('page1').classList.add('active');
+            document.getElementById('page2').classList.remove('active');
+        }
+    });
 </script>
 </body>
 </html>
